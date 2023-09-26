@@ -1,3 +1,5 @@
+#nice take from this function is realizing that the trni must be sampled then replaced with 
+# the proportion of data from the actual data set
 train_val_test_split <- function(data,prop = c(0.5,0.25,0.25)){
   nrw = nrow(dat)
   trnr = as.integer(nrw *prop[1])
