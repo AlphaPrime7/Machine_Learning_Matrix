@@ -58,4 +58,5 @@ gridSearch <- function(gs_data, y){
     }
   }
 }
+ad_data = read.csv("Data/ad.csv",header=FALSE)
 gridSearch(gs_data = "Data/ad.csv", y = ad_data$V1559)
