@@ -37,7 +37,7 @@ library(future)
 plan(multisession) #running multiple R sessions 
 fit_bag_ads_app <- fit_resamples(bag_ads_app, cv,metrics = metric_set(rmse, rsq),
       control = control_resamples(verbose = TRUE, save_pred = TRUE,
-      extract = function(x) extract_model(x)))
+      extract = function(x) extract_model(x))) #advised to use extract_fit_engine()
 
 dectree_fit_extracts <- function(x){
   for(i in x){
@@ -58,7 +58,7 @@ bag_roots_extract <-  function(x){
     mutate(root = map_chr(model, ~as.character(.x$fit$frame[1, 1]))) %>%
     select(root)  
 }
-bag_roots_extract(fit_bag_ads)
+bag_roots_extract(fit_bag_ads_app)
 
 # plot
 library(forcats)

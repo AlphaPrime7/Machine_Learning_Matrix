@@ -1,0 +1,315 @@
+---
+title: "Decision Tree Algorithms"
+output:
+  html_document:
+    df_print: paged
+---
+
+# DECISION TREES FOR DIMENSIONS REDUCTION (REGRESSION)
+
+## INTRO
+
+```         
+Decision tree algorithms are a set of algorithms that function in           dimensions reduction (or regression classification) and classification of   outcomes. 
+
+For raw classification purposes,these trees often start with a root         node (zero node) and grows based on known algorithms(e.g. CHAD) to          produce results that can assist stakeholders in making decisions. Such algorithms can be easily appreciated in a more friendly interface like SPSS.
+
+For regression classification purposes, these algorithms assist in          determining optimal dimensions or parameters to be used as predictors of    the Y-variable. Regression classification based on cost function (e.g. MSE) optimization can be appreciated in a useful interface like R or Python.
+```
+
+# BAG TREES
+
+```         
+Regression classification that facilitates reduction of dimensions hence saving time by pointing stakeholders directly to useful predictors.
+```
+
+## Import our dataset
+
+```{r}
+ad_data = read.csv("Data/ad.csv",header=FALSE)
+head(ad_data, 5)
+```
+
+## Data Exploration/Cleansing
+
+```{r}
+library(tidyverse)
+library(skimr)
+ad_data %>% select(-V5) %>% modify_if(is.character, as.factor) %>%
+skim() %>% select(-starts_with("numeric.p"))
+```
+
+-   A correlation plot will be insane given the number of attributes in this data set so we simply avoid that.
+-   As a matter of fact, this a supervised reduction of dimensions given how numerous our predictors are. The reduction of dimensions occurs through tree growth (or creation of nodes) that take care of analysis per predictor variable.
+
+## Data Modeling for Decision Tree
+
+```{r}
+#CV APPROACH
+library(tidymodels)
+set.seed(123)
+split <- initial_split(ad_data)
+train_data <- training(split) #or use my function
+test_data <- testing(split)
+cv <- vfold_cv(train_data) #cross-validation of the data
+
+#BOOTSTRAP
+set.seed(123)
+train_data_boot <- bootstraps(train_data, times = 10, apparent = TRUE)
+```
+
+## Pre-processing (Recipe)
+
+```{r}
+rec <- recipe(V1559 ~ ., train_data) %>% 
+  step_nzv(all_predictors(), freq_cut = 0, unique_cut = 0) %>% 
+  step_novel(all_nominal()) %>%
+  step_impute_median(all_numeric(), -all_outcomes(), -has_role("id vars"))
+```
+
+## Machine Learning Model Specification
+
+```{r}
+library(parsnip)
+library(rpart)
+set.seed(100)
+model_bag_ads <- bag_tree() %>% #bag is the aggregation method (gradient boosts or random forests)
+  set_mode("regression") %>%
+  set_engine("rpart", times = 10)
+```
+
+-   The model is created and the choice here is the bag_tree aggregator.
+-   There is the random_forest() and boost_tree() methods to choose from.
+-   Highly sophisticated algorithms we will delve deeper into.
+
+## Model Application to Recipe
+
+```{r}
+library(baguette)
+bag_ads_app <- workflow() %>% 
+  add_recipe(rec) %>%
+  add_model(model_bag_ads)
+```
+
+-   The model is applied to the recipe or pre-process created earlier. The recipe is very important in the success of this step.
+-   I have not stumbled upon any ideas on R's robustness in handling missing values or problems within data.
+-   It seems programs like SPSS possess the robustness needed to deal with issues in the data.
+-   Also , I am unsure of the tree growing algorithm used in R or other programs. A one found in SPSS is CHAD (Chi-square Automatic interaction Detection).
+
+## Fit Model
+
+```{r}
+set.seed(100)
+library(future)
+plan(multisession) #running multiple R sessions 
+fit_bag_ads_app <- fit_resamples(bag_ads_app, cv,metrics = metric_set(rmse, rsq),
+      control = control_resamples(verbose = TRUE, save_pred = TRUE,
+      extract = function(x) extract_model(x)))
+
+dectree_fit_extracts <- function(x){
+  for(i in x){
+    print(i)
+  }
+}
+dectree_fit_extracts(fit_bag_ads_app)
+```
+
+-   The model is then fitted to more training data from the CV samples generated above.
+-   The model can also be fitted to the bootstrap samples as well.
+
+## Root Extraction
+
+```{r}
+bag_roots_extract <-  function(x){
+  x %>% 
+    select(.extracts) %>% 
+    unnest(cols = c(.extracts)) %>% 
+    mutate(models = map(.extracts,
+                        ~.x$model_df)) %>% 
+    select(-.extracts) %>% 
+    unnest(cols = c(models)) %>% 
+    mutate(root = map_chr(model,
+                          ~as.character(.x$fit$frame[1, 1]))) %>%
+    select(root)  
+}
+bag_roots_extract(fit_bag_ads_app)
+```
+
+## Visualizing Roots
+
+```{r}
+library(forcats)
+bag_roots_extract(fit_bag_ads_app) %>% 
+  ggplot(mapping = aes(x = fct_rev(fct_infreq(root)))) + 
+  geom_bar() + 
+  coord_flip() + 
+  labs(x = "root", y = "count") +
+  theme(axis.text.y = element_text(size = 9, angle = 30))
+```
+
+-   The results show the best predictors for the Y variable (ad click).
+-   This approach is questionable for the regression approach shown above because we have a binary dichotomous Y variable.
+-   A logistic regression approach should be used and I will dive deeper into the package to determine if a binomial regression method is allowed.
+-   Hopefully, the {parsnip} package is able to deal with this type of data.
+
+# RANDOM FORESTS
+
+```         
+Regression classification that facilitates reduction of dimensions hence saving time by pointing stakeholders directly to useful predictors.
+```
+
+## Model Specification
+
+```{r}
+set.seed(100)
+model_rf_ads <-rand_forest() %>%
+  set_engine("ranger",
+             num.threads = parallel::detectCores(), 
+             importance = "permutation", 
+             verbose = TRUE) %>% 
+  set_mode("regression") %>% 
+  set_args(trees = 1000)
+```
+
+## Model Application to Recipe
+
+```{r}
+rf_ads_app <- workflow() %>% 
+  add_model(model_rf_ads) %>% 
+  add_recipe(rec)
+```
+
+## Fit Model to CV
+
+```{r}
+set.seed(100)
+plan(multisession)
+fit_rf_ads <- fit_resamples(
+  rf_ads_app,
+  cv,
+  metrics = metric_set(rmse, rsq),
+  control = control_resamples(verbose = TRUE,
+                              save_pred = TRUE,
+                              extract = function(x) x)
+)
+```
+
+-   In the final decision tree approach, the bootstrap samples will be used.
+
+## Visualization
+
+```{r}
+rf_tree_roots <- function(x){
+  library(ranger)
+  map_chr(1:1000, 
+          ~ranger::treeInfo(x, tree = .)[1, "splitvarName"])
+}
+
+rf_roots <- function(x){
+  x %>% 
+    select(.extracts) %>% 
+    unnest(cols = c(.extracts)) %>% 
+    mutate(fit = map(.extracts,
+                     ~.x$fit$fit$fit),
+           oob_rmse = map_dbl(fit,
+                              ~sqrt(.x$prediction.error)),
+           roots = map(fit, 
+                       ~rf_tree_roots(.))
+    ) %>% 
+    select(roots) %>% 
+    unnest(cols = c(roots))
+}
+
+# plot
+library(ggthemes)
+rf_roots(fit_rf_ads) %>% 
+  group_by(roots) %>% 
+  count() %>% 
+  arrange(desc(n)) %>% 
+  filter(n > 75) %>% 
+  ggplot(aes(fct_reorder(roots, n), n)) +
+  geom_col() + 
+  coord_flip() + 
+  labs(x = "root", y = "count") +
+  theme_economist(horizontal = F) +
+  theme(axis.text.y = element_text(size = 8))
+
+```
+
+# GRADIENT BOOSTS
+
+## Model Specification
+
+```{r}
+#spec model
+mod_boost <- boost_tree() %>% 
+  set_engine("xgboost", nthreads = parallel::detectCores()) %>% 
+  set_mode("regression")
+```
+
+## Workflow
+
+```{r}
+#app model to rec
+wflow_boost <- workflow() %>% 
+  add_recipe(rec) %>% 
+  add_model(mod_boost)
+```
+
+
+## Model Training
+```{r}
+#fit to data cross sections
+library(xgboost)
+set.seed(100)
+train_data_boot <- bootstraps(train_data, times = 10, apparent = TRUE) #bootstrap samples
+plan(multisession)
+fit_boost <- fit_resamples(
+  wflow_boost, 
+  train_data_boot,
+  metrics = metric_set(rmse, rsq),
+  control = control_resamples(verbose = TRUE,
+                              save_pred = TRUE)
+)
+```
+
+- Notice that the model is trained through bootstrapped data and not CV data
+- Seems to work faster too and this will be attempted on other tree methods
+
+# MODEL CV
+```{r}
+library(tune)
+collect_metrics(fit_bag_ads_app) %>% 
+  bind_rows(collect_metrics(fit_rf_ads)) %>%
+  bind_rows(collect_metrics(fit_boost)) %>% 
+  filter(.metric == "rmse") %>% 
+  mutate(model = c("bag", "rf", "boost")) %>% 
+  select(model, everything()) %>% 
+  knitr::kable()
+
+# bagged trees
+final_fit_bag <- last_fit(
+  bag_ads_app,
+  split = split
+)
+# random forest
+final_fit_rf <- last_fit(
+  rf_ads_app,
+  split = split
+)
+# boosted trees
+final_fit_boost <- last_fit(
+  wflow_boost,
+  split = split
+)
+
+collect_metrics(final_fit_bag) %>% 
+  bind_rows(collect_metrics(final_fit_rf)) %>%
+  bind_rows(collect_metrics(final_fit_boost)) %>% 
+  filter(.metric == "rmse") %>% 
+  mutate(model = c("bag", "rf", "boost")) %>% 
+  select(model, everything()) %>% 
+  knitr::kable()
+
+```
+
